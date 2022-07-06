@@ -6,12 +6,9 @@ from time import sleep
 
 #qiskit
 from qiskit import transpile,ClassicalRegister
-from qiskit.ignis.mitigation.measurement import complete_meas_cal,CompleteMeasFitter
 
 #qcchem
 from .base_backendwrapper import BackendWrapper
-from ..measurement.base_measurement import BaseMeasurement
-from ..measurement.pauli_measurement import PauliBasis
 
 
 class CountsBackend(BackendWrapper):
@@ -75,29 +72,77 @@ class CountsBackend(BackendWrapper):
         elif bases is None: bases=[PauliBasis('I'*circuit.num_qubits)]
         return self.jobs2counts(self.circuits2jobs(self.circ2circuits(circuit,bases),shots),bases)
     
-    def calibrate_pairwise_qrem(self,qubits=None):
-        if qubits is None: qubits=self.n_qubits
-        if qubits is None: raise ValueError('The number of qubits must be specified for a simulator')
-        if isinstance(qubits,int): qubits=range(qubits)
-        self.filters=[]
-        for i,q1 in enumerate(qubits):
-            self.filters.append([])
-            for q2 in qubits[i+1:]:
-                cal_circuits,states=complete_meas_cal([q1,q2])
-                res=self.circuits2jobs(cal_circuits)[0].result()
-                fitter=CompleteMeasFitter(res,states)
-                qrem_filter=fitter.filter
-                self.filters[-1].append(qrem_filter)
-        self.filters.pop(-1)
-    def apply_pairwise_qrem(self,counts,qubits):
-        assert len(qubits)==2
-        assert qubits[0]<qubits[1]
-        reduced_counts={}
-        if isinstance(counts,BaseMeasurement): counts=counts.results
-        for key,val in counts.items():
-            key=key[qubits[0]]+key[qubits[1]]
-            reduced_counts[key]=reduced_counts.get(key,0)+val
-        return self.filters[qubits[0]][qubits[1]].apply(reduced_counts)
-        
-#     def circ2counts(self,circuit,bases,shots=8192):
-#         return self.jobs2counts(self.circuits2jobs(self.circ2circuits(circuit,bases),shots),bases)
+from itertools import zip_longest
+
+class CommutationError(Exception):
+    pass
+
+class PauliBasis():
+    def __init__(self,elements):
+        self.basis=elements
+    def apply(self,circuit,barriers=False):
+        if self.active is None: self.initialise()
+        self._apply(circuit,barriers)
+        if not len(circuit.clbits): circuit.add_classicalregister()
+        active=sorted(self.active)
+        circuit.measure(active,[len(circuit.clbits)-i-1 for i in active])
+        return circuit
+    def __lt__(self,other):
+        try: other=other.basis
+        except AttributeError: pass
+        return self.basis<other
+    def __gt__(self,other):
+        try: other=other.basis
+        except AttributeError: pass
+        return self.basis>other
+    def __eq__(self,other):
+        try: other=other.basis
+        except AttributeError: pass
+        return self.basis==other
+    def __hash__(self):
+        return hash(self.basis)
+    def __len__(self):
+        return len(self.basis)
+    def contains(self,other):
+        try: diff=self.difference(other,check=False)
+        except CommutationError: return False
+        return not diff
+    @property
+    def basis(self):
+        return self._basis
+    @basis.setter
+    def basis(self,basis):
+        self._basis=basis.upper()
+        self.active=None
+    @property
+    def results(self):
+        try: return self._res
+        except AttributeError: raise AttributeError('No results assigned yet')
+    @results.setter
+    def results(self,counts):
+        self._res=counts
+    def initialise(self):
+        self.active=[i for i,P in enumerate(self.basis) if not P=='I']
+    def _apply(self,circuit,barriers=False):
+        if barriers: circuit.barrier()
+        for j,P in enumerate(self.basis):
+            if P in 'IZ': continue
+            if P=='Y': circuit.sdg(j)
+            if P in 'XY':
+                circuit.h(j)
+                continue
+            raise KeyError(f'Unknown Pauli operator {P}')
+        return circuit
+    def __str__(self):
+        return 'Basis('+str(self.basis)+')'
+    def difference(self,other,check=True):
+        try: other=other.basis
+        except AttributeError: pass
+        diff=0
+        for p1,p2 in zip_longest(self.basis,other,fillvalue='I'):
+            if p2 in (p1,'I'): continue
+            if p1=='I':
+                diff+=1
+                continue
+            raise CommutationError('The operators do not commute')
+        return diff
