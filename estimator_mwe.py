@@ -1,6 +1,7 @@
 from qiskit import QuantumCircuit
 from qiskit.circuit.parameter import Parameter
-from qcchem.backends.interface import get_backendwrapper
+from backends.interface import get_backendwrapper
+from backends.counts_backendwrapper import PauliBasis
 
 def evaluate_pauli(pauli,results):
     E=0
