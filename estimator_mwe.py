@@ -14,16 +14,19 @@ def evaluate_pauli(pauli,results):
 
 backend=get_backendwrapper('sim0')
 theta=0
+circuit_reps=1
 
 theta_=Parameter('t')
 circ=QuantumCircuit(2,2)
 circ.x(0)
-circ.h(0)
-circ.cx(0,1)
-circ.ry(theta_,0)
-circ.ry(theta_,1)
-circ.cx(0,1)
-circ.h(0)
+for i in range(circuit_reps):
+    circ.h(0)
+    circ.cx(0,1)
+    circ.ry(theta_/circuit_reps,0)
+    circ.ry(theta_/circuit_reps,1)
+    circ.cx(0,1)
+    circ.h(0)
+    circ.barrier()
 
 Ham={'XX':1,'YY':1,'ZZ':1}
 bases=tuple(PauliBasis(b) for b in Ham)
